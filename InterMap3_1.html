@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    #map {
+      height: 500px;
+      width: 100%;
+      margin-top: 20px;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      width: 90%;
+      max-width: 1200px;
+      margin-top: 20px;
+    }
+    .left-panel, .right-panel {
+      flex: 1;
+      min-width: 300px;
+      padding: 20px;
+      border: 1px solid #ccc;
+      margin: 10px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 300px; /* Adjust as necessary */
+      margin-top: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    table, th, td {
+      border: 1px solid black;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background: #f1f1f1;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .top-right-image {
+      width: 100px; /* Adjust as necessary */
+      vertical-align: middle;
+      margin-right: 20px;
+    }
+    .clickable {
+      color: blue;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .blue-ribbon {
+      background-color: #2e92fd;
+      color: white;
+      padding: 2px;
+      text-align: center;
+      width: 100%;
+      position: relative;
+      overflow: hidden; /* Ensure the title doesn't overflow */
+    }
+    .moving-container {
+      display: inline-block;
+      white-space: nowrap;
+      animation: scroll 10s linear infinite; /* Adjust duration as necessary */
+    }
+    @keyframes scroll {
+      0% {
+        transform: translateX(100%);
+      }
+      100% {
+        transform: translateX(-100%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="blue-ribbon">
+    <div class="moving-container">
+      <img src="https://lasvegascivilengineering.com/wp-content/uploads/2016/12/lvce_client-att-2.png" alt="Top Right Image" class="top-right-image">
+      <h1>AT&T Cell Map with CSV Upload</h1>
+    </div>
+  </div>
+  <div class="container">
+    <div class="left-panel">
+      <h2>Upload CSV File</h2>
+      <input type="file" id="csvFileInput" accept=".csv" />
+    </div>
+    <div class="right-panel">
+      <h2>Enter Coordinates</h2>
+      <form id="coordinateForm">
+        <label for="latitude">Latitude:</label>
+        <input type="text" id="latitude" name="latitude" required>
+        <label for="longitude">Longitude:</label>
+        <input type="text" id="longitude" name="longitude" required>
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </div>
+  <div id="map"></div>
+  <div class="table-container">
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>UPLOADED DEVICE_ID</th>
+          <th>UPLOADED POINT LATITUDE</th>
+          <th>UPLOADED POINT LONGITUDE</th>
+          <th>USID</th>
+          <th>USID LATITUDE</th>
+          <th>USID LONGITUDE</th>
+          <th>Distance (km)</th>
+          <th>ENODEB</th>
+          <th>REGION</th>
+          <th>ED_MARKET</th>
+          <th>SUBMARKET</th>
+          <th>COUNTY</th>
+          <th>STATE</th>
+          <th>FA_LOCATION</th>
+          <th>VENDOR</th>
+          <th>MSN_PAIR</th>
+          <th>ISREPEATER</th>
+          <th>ISDAS</th>
+          <th>ISINBUILDING</th>
+          <th>SITE_TYPE</th>
+          <th>CARRIERS_PER_USID</th>
+        </tr>
+      </thead>
+      <tbody>
+      </tbody>
+    </table>
+  </div>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+  <script>
+    // Initialize the map
+    var map = L.map('map').setView([0, 0], 2);
+    // Add a tile layer to the map
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    // Define custom icons
+    var preloadedIcon = L.icon({
+      iconUrl: 'https://static.thenounproject.com/png/539786-200.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+    var uploadedIcon = L.icon({
+      iconUrl: 'https://freesvg.org/img/Map-Pin.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34]
+    });
+
+    let uploadedPointsData = []; // Store uploaded points data
+
+    // Function to add markers from CSV data
+    function addMarkersFromCSV(data, icon) {
+      console.log("Adding markers from CSV data:", data);
+      data.forEach(function(row) {
+        var latitude = row['Latitude'] || row['LATITUDE'];
+        var longitude = row['Longitude'] || row['LONGITUDE'];
+        var deviceId = row['DeviceID'] || row['Device ID'] || row['USID'];
+        if (latitude && longitude) {
+          var marker = L.marker([latitude, longitude], { icon: icon }).addTo(map);
+          var tooltipContent = "DeviceID: " + (deviceId || "N/A") + "<br>Latitude: " + latitude + "<br>Longitude: " + longitude;
+          marker.bindTooltip(tooltipContent, {
+            permanent: false,
+            direction: 'top'
+          });
+          console.log("Added marker:", latitude, longitude);
+        } else {
+          console.warn('Missing latitude or longitude in row:', row);
+        }
+      });
+    }
+
+    // Function to calculate the distance between two points (Haversine formula)
+    function getDistance(lat1, lon1, lat2, lon2) {
+      function toRad(x) {
+        return x * Math.PI / 180;
+      }
+      var R = 6371; // Radius of the Earth in km
+      var dLat = toRad(lat2 - lat1);
+      var dLon = toRad(lon2 - lon1);
+      var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      var d = R * c;
+      return d;
+    }
+
+    // Function to filter predefined points based on uploaded points
+    function filterPredefinedPoints(uploadedPoints, predefinedPoints) {
+      if (!Array.isArray(uploadedPoints)) {
+        console.error('uploadedPoints is not an array:', uploadedPoints);
+        return [];
+      }
+
+      const filteredPoints = [];
+      const uniquePredefinedPoints = new Set(); // To track unique predefined points
+      const maxSearchRadius = 20000; // Maximum search radius in km
+      let currentRadius = 500; // Initial search radius
+      const stepSize = 500; // Step size to increase the search radius
+
+      uploadedPoints.forEach(uploadedPoint => {
+        const upLat = uploadedPoint['Latitude'] || uploadedPoint['LATITUDE'];
+        const upLon = uploadedPoint['Longitude'] || uploadedPoint['LONGITUDE'];
+        const deviceId = uploadedPoint['DeviceID'] || uploadedPoint['Device ID'] || uploadedPoint['USID'];
+
+        let foundPoints = [];
+        while (foundPoints.length < 5 && currentRadius <= maxSearchRadius) {
+          foundPoints = predefinedPoints.map(predefinedPoint => {
+            const preLat = predefinedPoint['Latitude'] || predefinedPoint['LATITUDE'];
+            const preLon = predefinedPoint['Longitude'] || predefinedPoint['LONGITUDE'];
+            const preDeviceId = predefinedPoint['DeviceID'] || predefinedPoint['Device ID'] || predefinedPoint['USID'];
+            const distance = getDistance(upLat, upLon, preLat, preLon);
+            return { ...predefinedPoint, distance, deviceId, upLat, upLon, preLat, preLon, preDeviceId };
+          }).filter(point => point.distance <= currentRadius);
+
+          // Sort by distance
+          foundPoints.sort((a, b) => a.distance - b.distance);
+
+          // Ensure uniqueness
+          const uniquePoints = [];
+          const uniqueKeys = new Set();
+          for (const point of foundPoints) {
+            const pointKey = `${point.preLat},${point.preLon}`;
+            if (!uniqueKeys.has(pointKey)) {
+              uniqueKeys.add(pointKey);
+              uniquePoints.push(point);
+              if (uniquePoints.length >= 5) break;
+            }
+          }
+
+          // Increase the search radius if not enough points are found
+          if (uniquePoints.length < 5) {
+            currentRadius += stepSize;
+          } else {
+            filteredPoints.push(...uniquePoints.slice(0, 5));
+            break;
+          }
+        }
+      });
+      return filteredPoints;
+    }
+
+    // Function to update the table with the filtered points
+    function updateTable(filteredPoints) {
+      const tableBody = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
+      tableBody.innerHTML = ''; // Clear existing table rows
+      filteredPoints.forEach(point => {
+        const row = tableBody.insertRow();
+        const deviceIdCell = row.insertCell(0);
+        deviceIdCell.innerText = point.deviceId;
+        deviceIdCell.className = 'clickable';
+        deviceIdCell.addEventListener('click', () => {
+          map.setView([point.upLat, point.upLon], 15); // Zoom level 15
+        });
+        row.insertCell(1).innerText = point.upLat;
+        row.insertCell(2).innerText = point.upLon;
+        row.insertCell(3).innerText = point.preDeviceId || "N/A";
+        row.insertCell(4).innerText = point.preLat;
+        row.insertCell(5).innerText = point.preLon;
+        row.insertCell(6).innerText = point.distance.toFixed(2);
+        row.insertCell(7).innerText = point.ENODEB || "N/A";
+        row.insertCell(8).innerText = point.REGION || "N/A";
+        row.insertCell(9).innerText = point.ED_MARKET || "N/A";
+        row.insertCell(10).innerText = point.SUBMARKET || "N/A";
+        row.insertCell(11).innerText = point.COUNTY || "N/A";
+        row.insertCell(12).innerText = point.STATE || "N/A";
+        row.insertCell(13).innerText = point.FA_LOCATION || "N/A";
+        row.insertCell(14).innerText = point.VENDOR || "N/A";
+        row.insertCell(15).innerText = point.MSN_PAIR || "N/A";
+        row.insertCell(16).innerText = point.ISREPEATER || "N/A";
+        row.insertCell(17).innerText = point.ISDAS || "N/A";
+        row.insertCell(18).innerText = point.ISINBUILDING || "N/A";
+        row.insertCell(19).innerText = point.SITE_TYPE || "N/A";
+        row.insertCell(20).innerText = point.CARRIERS_PER_USID || "N/A";
+      });
+    }
+
+    // Load predefined points from the backend API
+    function loadPredefinedPoints(callback) {
+      fetch('http://127.0.0.1:5000/api/predefined-points')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok ' + response.statusText);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log("Predefined points data:", data);
+        const predefinedPoints = data.map(point => ({
+          ...point,
+          Longitude: parseFloat(point.Longitude),
+          Latitude: parseFloat(point.Latitude)
+        }));
+        callback(predefinedPoints);
+      })
+      .catch(error => console.error('Error fetching predefined points:', error));
+    }
+
+    // Handle file upload
+    document.getElementById('csvFileInput').addEventListener('change', function(event) {
+      var file = event.target.files[0];
+      if (file) {
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          complete: function(results) {
+            var uploadedPoints = results.data;
+            uploadedPointsData = uploadedPoints; // Store uploaded points data
+            console.log("Uploaded points data:", uploadedPoints);
+            loadPredefinedPoints(function(predefinedPoints) {
+              const filteredPoints = filterPredefinedPoints(uploadedPoints, predefinedPoints);
+              console.log("Filtered predefined points:", filteredPoints);
+              addMarkersFromCSV(uploadedPoints, uploadedIcon);
+              addMarkersFromCSV(filteredPoints, preloadedIcon);
+              updateTable(filteredPoints);
+            });
+          },
+          error: function(error) {
+            console.error('Error parsing uploaded CSV file:', error);
+          }
+        });
+      } else {
+        console.warn('No file selected');
+      }
+    });
+
+    // Handle manual coordinate input
+    document.getElementById('coordinateForm').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const latitude = parseFloat(document.getElementById('latitude').value);
+      const longitude = parseFloat(document.getElementById('longitude').value);
+      if (!isNaN(latitude) && !isNaN(longitude)) {
+        const marker = L.marker([latitude, longitude], { icon: uploadedIcon }).addTo(map);
+        marker.bindPopup(`Latitude: ${latitude}<br>Longitude: ${longitude}`).openPopup();
+        map.setView([latitude, longitude], 13); // Zoom level 13
+
+        // Convert manual input coordinates to an array of uploaded points
+        const manualUploadedPoints = [{ LATITUDE: latitude, LONGITUDE: longitude }];
+
+        loadPredefinedPoints(function(predefinedPoints) {
+          const filteredPoints = filterPredefinedPoints(manualUploadedPoints, predefinedPoints);
+          filteredPoints.forEach(point => {
+            const preLat = point['Latitude'] || point['LATITUDE'];
+            const preLon = point['Longitude'] || point['LONGITUDE'];
+            var marker = L.marker([preLat, preLon], { icon: preloadedIcon }).addTo(map);
+            marker.bindPopup(`Latitude: ${preLat}<br>Longitude: ${preLon}<br>Distance: ${point.distance.toFixed(2)} km`).openPopup();
+          });
+          updateTable(filteredPoints);
+        });
+      } else {
+        alert('Please enter valid latitude and longitude values.');
+      }
+    });
+  </script>
+</body>
+</html>
